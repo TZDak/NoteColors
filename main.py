@@ -3,7 +3,8 @@ from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
-from kivy.properties import StringProperty, NumericProperty
+# StringProperty and NumericProperty are no longer used by NoteColorsApp directly
+# from kivy.properties import StringProperty, NumericProperty 
 
 import numpy as np
 import sounddevice as sd
@@ -44,7 +45,6 @@ def get_note_color(note_letter, octave):
 
     base_rgb = NOTES[note_letter]['base_rgb']
 
-    # Clamp octave to min/max and determine lightness factor
     if octave < MIN_OCTAVE:
         return (0.0, 0.0, 0.0)  # Black
     if octave > MAX_OCTAVE:
@@ -55,38 +55,6 @@ def get_note_color(note_letter, octave):
     if octave == MIDDLE_OCTAVE:
         return base_rgb
     elif octave < MIDDLE_OCTAVE:
-        # Darken: scale towards 0
-        # factor should be 0 for MIN_OCTAVE and approach 1 for MIDDLE_OCTAVE -1
-        # Example: if MIN_OCTAVE=0, MIDDLE_OCTAVE=4
-        # octave 0 -> factor = 0/4 = 0
-        # octave 1 -> factor = 1/4 = 0.25
-        # octave 2 -> factor = 2/4 = 0.5
-        # octave 3 -> factor = 3/4 = 0.75
-        # We want to scale by a factor that represents how close to MIDDLE_OCTAVE we are
-        darken_factor = octave / float(MIDDLE_OCTAVE - MIN_OCTAVE) if MIDDLE_OCTAVE != MIN_OCTAVE else 1.0
-        # Ensure factor is within a reasonable range, especially if MIN_OCTAVE is not 0
-        # This calculation might need refinement, the original was (octave / 4.0)
-        # Let's use a simpler approach for now:
-        # Scale from MIN_OCTAVE to MIDDLE_OCTAVE
-        # The closer to MIN_OCTAVE, the darker.
-        # The closer to MIDDLE_OCTAVE, the more it's the base_rgb.
-        # A simple linear interpolation:
-        # lightness_factor = (octave - MIN_OCTAVE) / float(MIDDLE_OCTAVE - MIN_OCTAVE)
-        # For octave < MIDDLE_OCTAVE, we want to scale the color down
-        # A more direct scaling:
-        # factor = (octave - MIN_OCTAVE + 1) / float(MIDDLE_OCTAVE - MIN_OCTAVE + 1)
-        # if octave = 0, factor = 1/5; octave = 3, factor = 4/5
-        # The original (octave / 4.0) assumed MIDDLE_OCTAVE is 4 and MIN_OCTAVE is 0
-        # Let's stick to the spirit of the original simplified instruction:
-        # If octave < 4, darken the color (e.g., lightened_rgb = base_rgb * (octave / 4.0))
-        # This will make octave 0 black, which is fine.
-        # However, it might make octaves 1,2,3 too dark.
-        # Let's try: scale = (octave - MIN_OCTAVE) / (MIDDLE_OCTAVE - MIN_OCTAVE)
-        # Octave 0 (Min) -> 0.0
-        # Octave 1 -> 0.25
-        # Octave 2 -> 0.5
-        # Octave 3 -> 0.75
-        # Octave 4 (Mid) -> 1.0 (handled by base_rgb)
         scale_factor = (float(octave) / MIDDLE_OCTAVE) if MIDDLE_OCTAVE > 0 else 0
         r_calc = r * scale_factor
         g_calc = g * scale_factor
@@ -103,28 +71,21 @@ def get_note_color(note_letter, octave):
 class ColorDisplayWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Initialize with a default color (e.g., black or white)
-        self.display_color_rgb = (0, 0, 0) # Initial color, will be updated
-        with self.canvas.before: # Use canvas.before for background
-            self.color_instruction = Color(*self.display_color_rgb, 1) # RGBA
+        self.display_color_rgb = (0, 0, 0) 
+        with self.canvas.before:
+            self.color_instruction = Color(*self.display_color_rgb, 1) 
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(pos=self._update_rect, size=self._update_rect)
 
     def _update_rect(self, instance, value):
         self.rect.pos = self.pos
         self.rect.size = self.size
-        # Also update color instruction if needed, or ensure it's redrawn
-        # For canvas.before, Kivy handles redraw on size/pos change usually.
 
     def set_color(self, rgb_tuple):
         self.display_color_rgb = rgb_tuple
-        # Update the color instruction directly
-        self.color_instruction.rgb = self.display_color_rgb
-        # No need to clear and re-add if we just update the Color instruction's rgb property.
-        # However, the suggestion was to clear and re-add, let's follow that to be safe.
         self.canvas.before.clear()
         with self.canvas.before:
-            self.color_instruction = Color(*self.display_color_rgb, 1) # alpha = 1
+            self.color_instruction = Color(*self.display_color_rgb, 1)
             self.rect = Rectangle(size=self.size, pos=self.pos)
 
 
@@ -138,89 +99,75 @@ def play_note_sound(note_letter, duration_ms=500, octave=4):
         return
 
     base_frequency = NOTES[note_letter]['frequency']
-    
-    # Adjust frequency based on octave. Each octave doubles/halves frequency.
-    # C4 is middle C. Octave 4 is the base frequency.
     frequency = base_frequency * (2 ** (octave - 4))
 
     duration_s = duration_ms / 1000.0
     t = np.linspace(0, duration_s, int(SAMPLE_RATE * duration_s), False)
     wave = np.sin(frequency * t * 2 * np.pi)
-
-    # Normalize to 16-bit range if using certain sounddevice configurations,
-    # but for float32 (default for sounddevice), it should be in [-1.0, 1.0].
-    # wave = wave * (2**15 - 1) / np.max(np.abs(wave)) # For int16
-    # wave = wave.astype(np.int16)
-
-    # Apply volume
     wave *= DEFAULT_VOLUME
     
-    # Play sound in a separate thread to avoid blocking Kivy UI
-    def play_sound():
+    def play_sound_in_thread(): # Renamed to avoid conflict if play_note_sound is called rapidly by multiple threads
         try:
             sd.play(wave, SAMPLE_RATE)
-            sd.wait()  # Wait until sound has finished playing
+            sd.wait()
         except Exception as e:
             print(f"Error playing sound: {e}")
 
-    sound_thread = threading.Thread(target=play_sound)
+    sound_thread = threading.Thread(target=play_sound_in_thread)
     sound_thread.start()
 
 
 class NoteColorsApp(App):
-    current_note_letter = StringProperty('i') # Default to Middle C
-    current_octave = NumericProperty(4)
 
     def build(self):
         # Main layout
         layout = BoxLayout(orientation='vertical')
 
-        # Color display widget
-        # Pass an initial color or let it use its default
-        self.color_display = ColorDisplayWidget() 
-        layout.add_widget(self.color_display) # Main area for color
+        # Color display layout - takes up 90% of vertical space
+        color_layout = BoxLayout(orientation='horizontal', size_hint_y=0.9)
+        self.color_display_i4 = ColorDisplayWidget()
+        self.color_display_j4 = ColorDisplayWidget()
+        color_layout.add_widget(self.color_display_i4)
+        color_layout.add_widget(self.color_display_j4)
+        layout.add_widget(color_layout)
 
-        # Control layout
-        controls = BoxLayout(orientation='horizontal', size_hint_y=0.2) # Smaller area for controls
+        # Initialize colors for the new displays
+        try:
+            color_i4 = get_note_color('i', 4) # Note 'i', octave 4
+            self.color_display_i4.set_color(color_i4)
+        except ValueError as e:
+            print(f"Error getting color for note 'i4': {e}")
+            self.color_display_i4.set_color((0.1, 0.1, 0.1)) # Dark gray for error
+
+        try:
+            color_j4 = get_note_color('j', 4) # Note 'j', octave 4
+            self.color_display_j4.set_color(color_j4)
+        except ValueError as e:
+            print(f"Error getting color for note 'j4': {e}")
+            self.color_display_j4.set_color((0.1, 0.1, 0.1)) # Dark gray for error
+
+        # Button layout - takes up 10% of vertical space
+        button_layout = BoxLayout(orientation='horizontal', size_hint_y=0.1)
         
-        # Button to show color
-        btn_show_color = Button(text="Show Middle C Color")
-        btn_show_color.bind(on_press=self.show_middle_c_color_action)
-        controls.add_widget(btn_show_color)
+        btn_play_i4 = Button(text="Play Note i4")
+        btn_play_i4.bind(on_press=self.play_note_i4_action)
+        button_layout.add_widget(btn_play_i4)
 
-        # Button to play sound
-        btn_play_sound = Button(text="Play Note Sound")
-        btn_play_sound.bind(on_press=self.play_current_note_sound_action)
-        controls.add_widget(btn_play_sound)
+        btn_play_j4 = Button(text="Play Note j4")
+        btn_play_j4.bind(on_press=self.play_note_j4_action)
+        button_layout.add_widget(btn_play_j4)
 
-        layout.add_widget(controls)
-
-        # Initialize display with the default note/octave
-        self.update_displayed_color()
-        # No initial sound playback, only on button press.
+        layout.add_widget(button_layout)
 
         return layout
 
-    def update_displayed_color(self, *args):
-        try:
-            new_color = get_note_color(self.current_note_letter, self.current_octave)
-            if self.color_display:
-                self.color_display.set_color(new_color)
-        except ValueError as e:
-            print(f"Error getting color for display: {e}")
-            if self.color_display:
-                self.color_display.set_color((0.1, 0.1, 0.1)) # Dark gray for error
+    def play_note_i4_action(self, instance):
+        print("Playing sound for: i4")
+        play_note_sound('i', duration_ms=500, octave=4)
 
-
-    def show_middle_c_color_action(self, instance):
-        self.current_note_letter = 'i' # B#/C (Chartreuse) - C4
-        self.current_octave = 4
-        self.update_displayed_color()
-        print(f"Set note to Middle C: {self.current_note_letter}{self.current_octave}")
-
-    def play_current_note_sound_action(self, instance):
-        print(f"Playing sound for: {self.current_note_letter}{self.current_octave}")
-        play_note_sound(self.current_note_letter, duration_ms=500, octave=self.current_octave)
+    def play_note_j4_action(self, instance):
+        print("Playing sound for: j4")
+        play_note_sound('j', duration_ms=500, octave=4)
 
 if __name__ == '__main__':
     NoteColorsApp().run()
