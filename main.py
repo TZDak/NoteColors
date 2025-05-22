@@ -9,6 +9,7 @@ from kivy.uix.button import Button
 import numpy as np
 import sounddevice as sd
 import threading # For non-blocking sound
+import colorsys # Added for color normalization
 
 # Note Data Structures
 # Frequencies for C4, C#4, D4
@@ -39,33 +40,69 @@ MIDDLE_OCTAVE = 4
 def get_note_color(note_letter, octave):
     """
     Calculates the color for a given note and octave.
+    Octave 4 colors are normalized to full saturation and medium lightness.
+    Other octaves are darkened or lightened from this normalized base.
     """
     if note_letter not in NOTES:
         raise ValueError(f"Unknown note letter: {note_letter}")
 
-    base_rgb = NOTES[note_letter]['base_rgb']
-
+    # Boundary conditions for min/max octaves
     if octave < MIN_OCTAVE:
         return (0.0, 0.0, 0.0)  # Black
     if octave > MAX_OCTAVE:
         return (1.0, 1.0, 1.0)  # White
 
-    r, g, b = base_rgb
+    original_base_rgb = NOTES[note_letter]['base_rgb']
+    r_orig, g_orig, b_orig = original_base_rgb
+
+    # Convert original base RGB to HLS, then normalize L and S
+    h, l_orig, s_orig = colorsys.rgb_to_hls(r_orig, g_orig, b_orig)
+    
+    # Normalized lightness = 0.5 (medium), Normalized saturation = 1.0 (full)
+    # Hue (h) is preserved from the original base_rgb
+    normalized_l = 0.5
+    normalized_s = 1.0
+    
+    # This is the reference color for MIDDLE_OCTAVE (octave 4)
+    # It has the original hue, but with full saturation and medium lightness.
+    r_norm, g_norm, b_norm = colorsys.hls_to_rgb(h, normalized_l, normalized_s)
+    
+    # This normalized RGB (r_norm, g_norm, b_norm) is the color for MIDDLE_OCTAVE (octave 4)
+    # It has the original hue, full saturation (1.0), and medium lightness (0.5).
 
     if octave == MIDDLE_OCTAVE:
-        return base_rgb
-    elif octave < MIDDLE_OCTAVE:
-        scale_factor = (float(octave) / MIDDLE_OCTAVE) if MIDDLE_OCTAVE > 0 else 0
-        r_calc = r * scale_factor
-        g_calc = g * scale_factor
-        b_calc = b * scale_factor
-        return (np.clip(r_calc, 0, 1), np.clip(g_calc, 0, 1), np.clip(b_calc, 0, 1))
-    else: # octave > MIDDLE_OCTAVE
-        lighten_factor = (float(octave - MIDDLE_OCTAVE) / (MAX_OCTAVE - MIDDLE_OCTAVE)) if MAX_OCTAVE != MIDDLE_OCTAVE else 0
-        r_calc = r + (1.0 - r) * lighten_factor
-        g_calc = g + (1.0 - g) * lighten_factor
-        b_calc = b + (1.0 - b) * lighten_factor
-        return (np.clip(r_calc, 0, 1), np.clip(g_calc, 0, 1), np.clip(b_calc, 0, 1))
+        # For octave 4, return the normalized color directly, ensuring components are clipped.
+        final_rgb = (max(0.0, min(1.0, r_norm)),
+                     max(0.0, min(1.0, g_norm)),
+                     max(0.0, min(1.0, b_norm)))
+    elif octave == MIN_OCTAVE: # Explicitly handle MIN_OCTAVE
+        final_rgb = (0.0, 0.0, 0.0) # Black
+    elif octave == MAX_OCTAVE: # Explicitly handle MAX_OCTAVE
+        final_rgb = (1.0, 1.0, 1.0) # White
+    else:
+        # For other octaves, adjust lightness from the normalized octave 4 color
+        # Convert the normalized octave 4 RGB to HLS to get its H, L_base, S_base
+        # Note: r_norm, g_norm, b_norm were derived from h, normalized_l=0.5, normalized_s=1.0
+        # So, h_base will be h, l_base will be ~0.5, and s_base will be ~1.0
+        h_base, l_base, s_base = colorsys.rgb_to_hls(r_norm, g_norm, b_norm)
+
+        lightness_step_per_octave = 0.1 # Defined step for lightness change
+
+        # Calculate new lightness
+        target_l = l_base + (octave - MIDDLE_OCTAVE) * lightness_step_per_octave
+        target_l = max(0.0, min(1.0, target_l)) # Clamp lightness to [0, 1]
+
+        # Create new HLS and convert back to RGB
+        # Use the hue (h_base) and saturation (s_base) from the normalized octave 4 color
+        final_rgb_hls = (h_base, target_l, s_base)
+        r_calc, g_calc, b_calc = colorsys.hls_to_rgb(final_rgb_hls[0], final_rgb_hls[1], final_rgb_hls[2])
+        
+        # Ensure final RGB components are clamped to [0, 1]
+        final_rgb = (max(0.0, min(1.0, r_calc)),
+                     max(0.0, min(1.0, g_calc)),
+                     max(0.0, min(1.0, b_calc)))
+    
+    return final_rgb
 
 
 class ColorDisplayWidget(Widget):
