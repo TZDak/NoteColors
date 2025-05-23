@@ -19,8 +19,8 @@ NOTES = {
     'p': {'name': 'G (Red)', 'base_rgb': (1.0, 0.0, 0.0), 'frequency': None},       # G4:  392.00 Hz
     'q': {'name': 'G#/Ab (Vermillion)', 'base_rgb': (0.9, 0.25, 0.21), 'frequency': None},# G#4: 415.30 Hz
     'r': {'name': 'A (Orange)', 'base_rgb': (1.0, 0.65, 0.0), 'frequency': 440.00}, # A4 (standard)
-    's': {'name': 'A#/Bb (Goldenrod)', 'base_rgb': (0.85, 0.65, 0.13), 'frequency': None},# A#4: 466.16 Hz
-    't': {'name': 'B/Cb (Yellow)', 'base_rgb': (1.0, 1.0, 0.0), 'frequency': None}, # B4:  493.88 Hz
+    's': {'name': 'A#/Bb (Goldenrod)', 'base_rgb': (0.855, 0.647, 0.125), 'frequency': 466.16},# A#4: 466.16 Hz
+    't': {'name': 'B/Cb (Yellow)', 'base_rgb': (1.0, 1.0, 0.0), 'frequency': 493.88}, # B4:  493.88 Hz
     'i': {'name': 'B#/C (Chartreuse)', 'base_rgb': (0.5, 1.0, 0.0), 'frequency': 261.63}, # C4 (Middle C)
     'j': {'name': 'C#/Db (Green)', 'base_rgb': (0.0, 0.5, 0.0), 'frequency': 277.18}, # C#4/Db4
     'k': {'name': 'D (Cyan)', 'base_rgb': (0.0, 1.0, 1.0), 'frequency': 293.66},    # D4
