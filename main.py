@@ -10,6 +10,7 @@ import numpy as np
 import sounddevice as sd
 import threading # For non-blocking sound
 import colorsys # Added for color normalization
+import random # Added for note management
 
 # Note Data Structures
 # Frequencies for C4, C#4, D4
@@ -108,7 +109,8 @@ def get_note_color(note_letter, octave):
 class ColorDisplayWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.display_color_rgb = (0, 0, 0) 
+        self.display_color_rgb = (0, 0, 0)
+        self.note_id = None # To store note identifier like 'i4'
         with self.canvas.before:
             self.color_instruction = Color(*self.display_color_rgb, 1) 
             self.rect = Rectangle(size=self.size, pos=self.pos)
@@ -124,6 +126,17 @@ class ColorDisplayWidget(Widget):
         with self.canvas.before:
             self.color_instruction = Color(*self.display_color_rgb, 1)
             self.rect = Rectangle(size=self.size, pos=self.pos)
+
+    def set_color_by_note(self, note_letter, octave):
+        """Sets the widget's color based on note letter and octave."""
+        try:
+            rgb_tuple = get_note_color(note_letter, octave)
+            self.set_color(rgb_tuple)
+            self.note_id = f"{note_letter}{octave}"
+        except ValueError as e:
+            print(f"Error in set_color_by_note: {e}. Setting to default color.")
+            self.set_color((0.1, 0.1, 0.1)) # Default error color (dark gray)
+            self.note_id = None
 
 
 def play_note_sound(note_letter, duration_ms=500, octave=4):
@@ -155,56 +168,193 @@ def play_note_sound(note_letter, duration_ms=500, octave=4):
 
 
 class NoteColorsApp(App):
+    CORRECT_IDS_FOR_PROGRESSION = 3 # Define the threshold for progression
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.initial_note_pool = ['t3', 'i4', 'j4', 'k4', 's3'] # Expanded pool for testing progression
+        
+        # Randomly select one note to be active initially
+        if not self.initial_note_pool:
+            raise ValueError("initial_note_pool cannot be empty.")
+        initial_active_note_id = random.choice(self.initial_note_pool)
+        self.active_notes = [initial_active_note_id]
+        
+        # Initialize note_stats for the first active note
+        self.note_stats = {
+            initial_active_note_id: {
+                'times_identified_correctly_sound': 0
+                # Future stats can be added here
+            }
+        }
+        self.current_target_note_id = None # Initialize current target note
+        # For debugging or to see initial state:
+        print(f"Initial active note: {self.active_notes[0]}")
+        print(f"Initial note_stats: {self.note_stats}")
+
+    def _play_note_sound(self, note_letter, duration_ms=500, octave=4):
+        """
+        Generates and plays a sine wave for the given note and duration.
+        (Moved into the class)
+        """
+        if note_letter not in NOTES or NOTES[note_letter].get('frequency') is None:
+            print(f"Error: Frequency not defined for note letter: {note_letter}")
+            return
+
+        base_frequency = NOTES[note_letter]['frequency']
+        frequency = base_frequency * (2 ** (octave - 4))
+
+        duration_s = duration_ms / 1000.0
+        t = np.linspace(0, duration_s, int(SAMPLE_RATE * duration_s), False)
+        wave = np.sin(frequency * t * 2 * np.pi)
+        wave *= DEFAULT_VOLUME
+        
+        def play_sound_in_thread():
+            try:
+                sd.play(wave, SAMPLE_RATE)
+                sd.wait()
+            except Exception as e:
+                print(f"Error playing sound: {e}")
+
+        sound_thread = threading.Thread(target=play_sound_in_thread)
+        sound_thread.start()
 
     def build(self):
-        # Main layout
-        layout = BoxLayout(orientation='vertical')
+        main_layout = BoxLayout(orientation='vertical')
 
-        # Color display layout - takes up 90% of vertical space
-        color_layout = BoxLayout(orientation='horizontal', size_hint_y=0.9)
-        self.color_display_i4 = ColorDisplayWidget()
-        self.color_display_j4 = ColorDisplayWidget()
-        color_layout.add_widget(self.color_display_i4)
-        color_layout.add_widget(self.color_display_j4)
-        layout.add_widget(color_layout)
+        self.color_patches_layout = BoxLayout(orientation='horizontal', size_hint_y=0.8)
+        main_layout.add_widget(self.color_patches_layout)
 
-        # Initialize colors for the new displays
-        try:
-            color_i4 = get_note_color('i', 4) # Note 'i', octave 4
-            self.color_display_i4.set_color(color_i4)
-        except ValueError as e:
-            print(f"Error getting color for note 'i4': {e}")
-            self.color_display_i4.set_color((0.1, 0.1, 0.1)) # Dark gray for error
+        self.play_challenge_note_button = Button(
+            text="Play Random Note for Identification",
+            size_hint_y=0.2
+        )
+        self.play_challenge_note_button.bind(on_press=self.play_challenge_note_action)
+        main_layout.add_widget(self.play_challenge_note_button)
 
-        try:
-            color_j4 = get_note_color('j', 4) # Note 'j', octave 4
-            self.color_display_j4.set_color(color_j4)
-        except ValueError as e:
-            print(f"Error getting color for note 'j4': {e}")
-            self.color_display_j4.set_color((0.1, 0.1, 0.1)) # Dark gray for error
+        self.update_color_patches_display() # Populate initial color patches
 
-        # Button layout - takes up 10% of vertical space
-        button_layout = BoxLayout(orientation='horizontal', size_hint_y=0.1)
+        return main_layout
+
+    def play_challenge_note_action(self, instance):
+        if not self.active_notes:
+            print("No active notes available to play as a challenge.")
+            return
         
-        btn_play_i4 = Button(text="Play Note i4")
-        btn_play_i4.bind(on_press=self.play_note_i4_action)
-        button_layout.add_widget(btn_play_i4)
+        self.current_target_note_id = random.choice(self.active_notes)
+        
+        try:
+            note_letter = self.current_target_note_id[0]
+            octave = int(self.current_target_note_id[1:])
+            
+            # Ensure the note stats entry exists, if not, create it
+            if self.current_target_note_id not in self.note_stats:
+                self.note_stats[self.current_target_note_id] = {'times_identified_correctly_sound': 0}
 
-        btn_play_j4 = Button(text="Play Note j4")
-        btn_play_j4.bind(on_press=self.play_note_j4_action)
-        button_layout.add_widget(btn_play_j4)
+            self._play_note_sound(note_letter, duration_ms=500, octave=octave)
+            print(f"Playing challenge note: {self.current_target_note_id}")
+        except (IndexError, ValueError) as e:
+            print(f"Error parsing current_target_note_id '{self.current_target_note_id}': {e}")
+            self.current_target_note_id = None # Reset if parsing failed
+        except Exception as e:
+            print(f"An unexpected error occurred in play_challenge_note_action: {e}")
+            self.current_target_note_id = None
 
-        layout.add_widget(button_layout)
 
-        return layout
+    def handle_color_patch_click(self, clicked_widget_instance):
+        clicked_note_id = clicked_widget_instance.note_id
 
-    def play_note_i4_action(self, instance):
-        print("Playing sound for: i4")
-        play_note_sound('i', duration_ms=500, octave=4)
+        if self.current_target_note_id is None:
+            print("Play a note first by clicking the 'Play Random Note' button!")
+            return
 
-    def play_note_j4_action(self, instance):
-        print("Playing sound for: j4")
-        play_note_sound('j', duration_ms=500, octave=4)
+        if clicked_note_id == self.current_target_note_id:
+            print(f"Correct! You identified {clicked_note_id}")
+            # Ensure stats entry exists before incrementing
+            if self.current_target_note_id not in self.note_stats:
+                 self.note_stats[self.current_target_note_id] = {'times_identified_correctly_sound': 0}
+            self.note_stats[self.current_target_note_id]['times_identified_correctly_sound'] += 1
+            
+            identified_note = self.current_target_note_id # Store before resetting
+            target_stats = self.note_stats[identified_note]
+            
+            print(f"Stats for {identified_note}: {target_stats}")
+
+            # Check for progression
+            if target_stats['times_identified_correctly_sound'] == self.CORRECT_IDS_FOR_PROGRESSION:
+                print(f"Note {identified_note} reached {self.CORRECT_IDS_FOR_PROGRESSION} correct identifications. Attempting progression.")
+                self.attempt_to_add_new_note()
+            
+            self.current_target_note_id = None # Reset for next challenge
+        else:
+            print(f"Incorrect. You clicked {clicked_note_id}, but the note was {self.current_target_note_id}")
+
+    def attempt_to_add_new_note(self):
+        """Attempts to add a new note from the initial_note_pool to active_notes."""
+        available_new_notes = [note for note in self.initial_note_pool if note not in self.active_notes]
+
+        if available_new_notes:
+            # Select the first available note for predictable progression
+            new_note_to_add = available_new_notes[0] 
+            self.active_notes.append(new_note_to_add)
+            
+            # Initialize stats for the new note
+            if new_note_to_add not in self.note_stats:
+                self.note_stats[new_note_to_add] = {'times_identified_correctly_sound': 0}
+            
+            print(f"Progress! Added new note: {new_note_to_add}. Active notes: {self.active_notes}")
+            self.update_color_patches_display() # Refresh display with the new note
+        else:
+            print("All initial notes have been added!")
+
+    def update_color_patches_display(self):
+        """Clears and repopulates the color patches display based on active_notes."""
+        self.color_patches_layout.clear_widgets()
+        if not self.active_notes:
+            print("No active notes to display.")
+            return
+
+        for note_id_str in self.active_notes:
+            patch_widget = ColorDisplayWidget() # Create instance outside try/except for consistent adding
+            try:
+                if len(note_id_str) < 2:
+                    print(f"Invalid note_id_str: {note_id_str}. Skipping.")
+                    patch_widget.set_color((0.1,0.1,0.1)) # Error color
+                    patch_widget.note_id = note_id_str # Store problematic id
+                else:
+                    note_letter = note_id_str[0]
+                    octave_str = note_id_str[1:]
+                    
+                    if not octave_str.isdigit():
+                        print(f"Invalid octave in note_id_str: {note_id_str}. Skipping.")
+                        patch_widget.set_color((0.1,0.1,0.1)) # Error color
+                        patch_widget.note_id = note_id_str
+                    else:
+                        octave = int(octave_str)
+                        if note_letter not in NOTES:
+                            print(f"Note letter '{note_letter}' from note_id '{note_id_str}' not found in NOTES. Skipping.")
+                            patch_widget.set_color((0.1,0.1,0.1)) # Error color
+                            patch_widget.note_id = note_id_str
+                        else:
+                            patch_widget.set_color_by_note(note_letter, octave)
+                            # patch_widget.note_id is set within set_color_by_note
+            except Exception as e:
+                print(f"Error processing note_id_str '{note_id_str}' for display: {e}")
+                patch_widget.set_color((0.1,0.1,0.1)) # Error color
+                patch_widget.note_id = "ERROR" # Mark as error
+
+            # Define the touch handler for each patch
+            def on_patch_touch(widget_instance, touch):
+                # Check collision and ensure it's the start of a touch (not motion after touch)
+                if widget_instance.collide_point(*touch.pos) and touch.is_double_tap == False:
+                    if not hasattr(touch, 'is_processed_by_patch') or not touch.is_processed_by_patch:
+                        touch.is_processed_by_patch = True # Mark touch as processed
+                        self.handle_color_patch_click(widget_instance)
+                        return True # Consume the event
+                return False # Pass the event
+
+            patch_widget.bind(on_touch_down=on_patch_touch)
+            self.color_patches_layout.add_widget(patch_widget)
 
 if __name__ == '__main__':
     NoteColorsApp().run()
